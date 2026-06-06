@@ -1,0 +1,594 @@
+// ==UserScript==
+// @name         JoomPulse Exportador XLSX Completo
+// @namespace    https://joompulse.com/
+// @version      1.1
+// @description  Exporta automaticamente todas as páginas para XLSX com imagens
+// @match        https://joompulse.com/*
+// @grant        none
+// @require      https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    let executando = false;
+    let parar = false;
+    let produtos = [];
+    let idsColetados = new Set();
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function limpar(texto) {
+        return (texto || '')
+            .replace(/\n/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function atualizarStatus(msg) {
+        const el = document.getElementById('jp-status');
+
+        if (el) {
+            el.textContent = msg;
+        }
+    }
+
+    function criarInterface() {
+
+        if (document.getElementById('jp-exportar')) {
+            return;
+        }
+
+        const exportar = document.createElement('button');
+
+        exportar.id = 'jp-exportar';
+        exportar.innerText = '📊 Exportar Tudo';
+
+        exportar.style.cssText = `
+            position:fixed;
+            right:20px;
+            bottom:80px;
+            z-index:999999;
+            padding:12px;
+            border:none;
+            border-radius:8px;
+            cursor:pointer;
+            font-weight:bold;
+            background:#198754;
+            color:white;
+        `;
+
+        const stop = document.createElement('button');
+
+        stop.id = 'jp-stop';
+        stop.innerText = '⛔ STOP';
+
+        stop.style.cssText = `
+            position:fixed;
+            right:20px;
+            bottom:30px;
+            z-index:999999;
+            padding:12px;
+            border:none;
+            border-radius:8px;
+            cursor:pointer;
+            font-weight:bold;
+            background:#dc3545;
+            color:white;
+        `;
+
+        const status = document.createElement('div');
+
+        status.id = 'jp-status';
+
+        status.style.cssText = `
+            position:fixed;
+            right:20px;
+            bottom:140px;
+            z-index:999999;
+            background:#fff;
+            border:1px solid #ccc;
+            padding:10px;
+            border-radius:8px;
+            min-width:300px;
+            font-size:12px;
+            box-shadow:0 0 10px rgba(0,0,0,.2);
+        `;
+
+        status.textContent = 'Pronto';
+
+        document.body.appendChild(exportar);
+        document.body.appendChild(stop);
+        document.body.appendChild(status);
+
+        exportar.addEventListener(
+            'click',
+            iniciarExportacao
+        );
+
+        stop.addEventListener('click', () => {
+
+            parar = true;
+
+            atualizarStatus(
+                'Parando exportação...'
+            );
+        });
+    }
+
+    function obterPaginaAtual() {
+
+        const ativa = document.querySelector(
+            '.ant-pagination-item-active a'
+        );
+
+        return ativa
+            ? parseInt(ativa.textContent.trim())
+            : 1;
+    }
+        function coletarProdutosDaPagina() {
+
+        const linhas = document.querySelectorAll(
+            'tr.ant-table-row'
+        );
+
+        let adicionados = 0;
+
+        linhas.forEach(linha => {
+
+            const colunas =
+                linha.querySelectorAll('td');
+
+            if (colunas.length < 11) {
+                return;
+            }
+
+            const linkEl =
+                colunas[3].querySelector('a');
+
+            if (!linkEl) {
+                return;
+            }
+
+            const nome =
+                limpar(linkEl.textContent);
+
+            const href =
+                linkEl.getAttribute('href') || '';
+
+            const link =
+                'https://joompulse.com' + href;
+
+            // CAPTURA DA IMAGEM
+            const imagemUrl =
+                linha.querySelector(
+                    'img[alt="product"]'
+                )?.src || '';
+
+            const idMLB =
+                limpar(
+                    colunas[3]
+                    .querySelector('.subtitle')
+                    ?.textContent
+                );
+
+            if (!idMLB) {
+                return;
+            }
+
+            if (idsColetados.has(idMLB)) {
+                return;
+            }
+
+            idsColetados.add(idMLB);
+
+            const receita =
+                limpar(
+                    colunas[4]
+                    .innerText
+                    .replace(
+                        'Catálogo total',
+                        ''
+                    )
+                );
+
+            const mediaVendas =
+                limpar(
+                    colunas[5]
+                    .innerText
+                    .replace(
+                        'Catálogo total',
+                        ''
+                    )
+                );
+
+            const totalVendas =
+                limpar(
+                    colunas[6]
+                    .innerText
+                    .replace(
+                        'Catálogo total',
+                        ''
+                    )
+                );
+
+            const categoria =
+                limpar(
+                    colunas[7].innerText
+                );
+
+            const preco =
+                limpar(
+                    colunas[8].innerText
+                );
+
+            const vendedor =
+                limpar(
+                    colunas[9].innerText
+                );
+
+            const marca =
+                limpar(
+                    colunas[10].innerText
+                );
+
+            produtos.push({
+
+                Nome: nome,
+
+                Link: link,
+
+                Imagem_URL: imagemUrl,
+
+                ID_MLB: idMLB,
+
+                Receita_Media: receita,
+
+                Media_Vendas: mediaVendas,
+
+                Total_Vendas: totalVendas,
+
+                Categoria: categoria,
+
+                Preco: preco,
+
+                Vendedor: vendedor,
+
+                Marca: marca,
+
+                Pagina: obterPaginaAtual()
+            });
+
+            adicionados++;
+        });
+
+        return adicionados;
+    }
+        async function esperarTrocaPagina(nomeAnterior) {
+
+        const inicio = Date.now();
+
+        while (Date.now() - inicio < 30000) {
+
+            if (parar) {
+                return false;
+            }
+
+            const primeiro =
+                document.querySelector(
+                    'tr.ant-table-row td:nth-child(4) a'
+                );
+
+            const nomeAtual =
+                primeiro
+                    ? primeiro.textContent.trim()
+                    : '';
+
+            if (
+                nomeAtual &&
+                nomeAtual !== nomeAnterior
+            ) {
+
+                await sleep(1000);
+
+                return true;
+            }
+
+            await sleep(500);
+        }
+
+        return false;
+    }
+
+    async function irParaProximaPagina() {
+
+        const botao =
+            document.querySelector(
+                'li.ant-pagination-next'
+            );
+
+        if (!botao) {
+
+            atualizarStatus(
+                'Botão próxima página não encontrado'
+            );
+
+            return false;
+        }
+
+        if (
+            botao.classList.contains(
+                'ant-pagination-disabled'
+            )
+        ) {
+
+            atualizarStatus(
+                'Última página alcançada'
+            );
+
+            return false;
+        }
+
+        const primeiro =
+            document.querySelector(
+                'tr.ant-table-row td:nth-child(4) a'
+            );
+
+        const nomeAnterior =
+            primeiro
+                ? primeiro.textContent.trim()
+                : '';
+
+        botao.click();
+
+        atualizarStatus(
+            'Carregando próxima página...'
+        );
+
+        return await esperarTrocaPagina(
+            nomeAnterior
+        );
+    }
+
+    async function iniciarExportacao() {
+
+        if (executando) {
+            return;
+        }
+
+        executando = true;
+        parar = false;
+
+        produtos = [];
+        idsColetados.clear();
+
+        try {
+
+            while (true) {
+
+                if (parar) {
+
+                    atualizarStatus(
+                        'Exportação interrompida'
+                    );
+
+                    break;
+                }
+
+                const pagina =
+                    obterPaginaAtual();
+
+                atualizarStatus(
+                    `Página ${pagina} | Coletados: ${produtos.length}`
+                );
+
+                const adicionados =
+                    coletarProdutosDaPagina();
+
+                atualizarStatus(
+                    `Página ${pagina} | +${adicionados} produtos | Total: ${produtos.length}`
+                );
+
+                if (parar) {
+                    break;
+                }
+
+                const sucesso =
+                    await irParaProximaPagina();
+
+                if (!sucesso) {
+                    break;
+                }
+
+                await sleep(1500);
+            }
+
+        } catch (erro) {
+
+            console.error(
+                'Erro durante exportação:',
+                erro
+            );
+
+            atualizarStatus(
+                'Erro durante exportação'
+            );
+
+        } finally {
+
+            gerarExcel();
+
+            executando = false;
+        }
+    }    function gerarExcel() {
+
+        atualizarStatus(
+            'Gerando XLSX...'
+        );
+
+        const ws =
+            XLSX.utils.json_to_sheet(produtos);
+
+        // Ajuste largura das colunas
+        ws['!cols'] = [
+            { wch: 50 }, // Nome
+            { wch: 60 }, // Link
+            { wch: 60 }, // Imagem_URL
+            { wch: 20 }, // ID_MLB
+            { wch: 20 }, // Receita
+            { wch: 20 }, // Média vendas
+            { wch: 20 }, // Total vendas
+            { wch: 35 }, // Categoria
+            { wch: 15 }, // Preço
+            { wch: 30 }, // Vendedor
+            { wch: 25 }, // Marca
+            { wch: 10 }  // Página
+        ];
+
+        const wb =
+            XLSX.utils.book_new();
+
+        XLSX.utils.book_append_sheet(
+            wb,
+            ws,
+            'Produtos'
+        );
+
+        const range =
+            XLSX.utils.decode_range(
+                ws['!ref']
+            );
+
+        // Coluna B = Link
+        // Coluna C = Imagem_URL
+
+        for (
+            let r = 1;
+            r <= range.e.r;
+            r++
+        ) {
+
+            const linkCell =
+                XLSX.utils.encode_cell({
+                    r,
+                    c: 1
+                });
+
+            const imagemCell =
+                XLSX.utils.encode_cell({
+                    r,
+                    c: 2
+                });
+
+            if (
+                ws[linkCell] &&
+                ws[linkCell].v
+            ) {
+
+                ws[linkCell].l = {
+                    Target:
+                        ws[linkCell].v
+                };
+            }
+
+            if (
+                ws[imagemCell] &&
+                ws[imagemCell].v
+            ) {
+
+                ws[imagemCell].l = {
+                    Target:
+                        ws[imagemCell].v
+                };
+            }
+        }
+
+        const nomeArquivo =
+            `JoomPulse_${new Date()
+                .toISOString()
+                .replace(/[:.]/g, '-')
+            }.xlsx`;
+
+        XLSX.writeFile(
+            wb,
+            nomeArquivo
+        );
+
+        atualizarStatus(
+            `Concluído! ${produtos.length} produtos exportados`
+        );
+
+        console.log(
+            'Exportação finalizada:',
+            produtos.length
+        );
+    }
+
+    const observer =
+        new MutationObserver(() => {
+
+            criarInterface();
+
+        });
+
+    observer.observe(
+        document.body,
+        {
+            childList: true,
+            subtree: true
+        }
+    );
+
+    criarInterface();
+
+})();
+
+
+
+---------------------------------------------------------------------------------------------------------
+
+
+
+// ==UserScript==
+// @name         Remove Blur + Remove Card
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  Remove blur e blocos específicos no JoomPulse
+// @match        *://joompulse.com/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    function limpar() {
+
+        // Remove a classe "blur" de TODOS os elementos
+        document.querySelectorAll('.blur').forEach(el => {
+            el.classList.remove('blur');
+        });
+
+        // Remove os blocos que possuem essa classe
+        document
+            .querySelectorAll('.jsx-59aa2464da0f164c.description')
+            .forEach(el => {
+
+                const bloco = el.parentElement;
+
+                if (bloco) {
+                    bloco.remove();
+                }
+
+            });
+
+    }
+
+    limpar();
+
+    setInterval(limpar, 300);
+
+})();
+
+
